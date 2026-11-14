@@ -24,6 +24,14 @@ Run the standalone mock server example:
 cargo run --example test_server
 ```
 
+## Security & Compliance
+
+- **BPSec (RFC 9172)**: Strict signature verification by default; rejection of unsigned bundles and missing keys under `VerifyPolicy::Strict`.
+- **Cyber Resilience Act (CRA)**: Token file security (`--token-file`), lifetime calculation clamping preventing integer overflows, VEX audit documentation (`RUSTSEC-2026-0459`), and SHA-pinned CI actions.
+- **Frontend XSS Hardening**: Markdown parser uses random cryptographic nonces, disables remote external images by default, and avoids ReDoS regexes.
+- **Rust Quality Standards**: 100% `unwrap`-free and `panic!`-free production codebase.
+- **Documentation**: See [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md), and Architectural Decision Records in [`adr/`](adr/).
+
 ## License
 
 Dual-licensed under the Apache License, Version 2.0 or the MIT License (crate metadata: `Apache-2.0`). See [LICENSE.md](LICENSE.md).
