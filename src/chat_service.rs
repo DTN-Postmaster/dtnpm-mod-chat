@@ -50,9 +50,10 @@ impl ChatService {
 
         let auth_status = verify_parsed_bundle(&parsed, &self.keystore);
         let policy = self.keystore.get_policy();
-        if policy == VerifyPolicy::Strict && auth_status == AuthStatus::Invalid {
+        if policy == VerifyPolicy::Strict && auth_status != AuthStatus::Valid {
             warn!(
-                "ChatService: dropping delivered bundle due to strict policy and invalid signature"
+                auth_status = ?auth_status,
+                "ChatService: dropping delivered bundle due to strict policy without valid BPSec signature"
             );
             return Ok(());
         }
@@ -93,8 +94,9 @@ impl ChatService {
             .unwrap_or_else(|_| dt.to_string());
 
         let creation_time_ms = (dt.unix_timestamp_nanos() / 1_000_000) as i64;
-        let lifetime_secs = bundle.primary.lifetime.as_secs();
-        let expiry_timestamp = creation_time_ms + (lifetime_secs as i64 * 1000);
+        let lifetime_secs = bundle.primary.lifetime.as_secs().min(365 * 86_400);
+        let expiry_timestamp =
+            creation_time_ms.saturating_add((lifetime_secs as i64).saturating_mul(1000));
 
         let msg = ChatMessage {
             id: bundle_id.clone(),
@@ -158,5 +160,163 @@ impl Service for ChatService {
         debug!("ChatService on_deliver called for bundle_id={bundle_id:?}, len={total_len}");
         let data = buffer_stream(stream, total_len).await?;
         self.handle_delivered_bundle(data).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dtnpm_core::MockBpa;
+    use dtnpm_core::internal_storage::InternalStorage;
+    use dtnpm_core::security::{Direction, KeyEntry, sign_bundle_with_key};
+    use hardy_bpv7::builder::Builder;
+    use hardy_bpv7::creation_timestamp::CreationTimestamp;
+    use std::time::Duration;
+
+    fn make_chat_service(keystore: Arc<DirectionalKeyStore>) -> (ChatService, InternalStorage) {
+        let storage = InternalStorage::new_in_memory().unwrap();
+        let bpa = Arc::new(MockBpa::new("dtn://stata/"));
+        let tracker = ServiceTracker::new(bpa);
+        (
+            ChatService::new(storage.clone(), tracker, keystore),
+            storage,
+        )
+    }
+
+    fn build_chat_bundle(src: &str, dst: &str, text: &str, lifetime_secs: u64) -> Vec<u8> {
+        let src_eid: Eid = src.parse().unwrap();
+        let dst_eid: Eid = dst.parse().unwrap();
+        let (_bundle, raw) = Builder::new(src_eid, dst_eid)
+            .with_lifetime(Duration::from_secs(lifetime_secs))
+            .with_payload(text.as_bytes().to_vec().into())
+            .build(CreationTimestamp::now())
+            .unwrap();
+        raw.into_vec()
+    }
+
+    #[tokio::test]
+    async fn strict_policy_rejects_unsigned_missing_key_and_invalid_accepts_valid() {
+        let keystore = Arc::new(DirectionalKeyStore::empty());
+        keystore.set_policy(VerifyPolicy::Strict).unwrap();
+        let valid_secret = b"chat_inbound_secret_key_32_bytes".to_vec();
+        keystore
+            .add_key(
+                Direction::Inbound,
+                "dtn://f4jxq/*".to_string(),
+                valid_secret.clone(),
+                None,
+            )
+            .unwrap();
+
+        let (service, storage) = make_chat_service(keystore);
+
+        // 1. Unsigned bundle must be dropped
+        let unsigned = build_chat_bundle("dtn://f4jxq/chat", "dtn://stata/chat", "unsigned", 3600);
+        service
+            .handle_delivered_bundle(Bytes::from(unsigned.clone()))
+            .await
+            .unwrap();
+        assert!(storage.list_conversations().unwrap().is_empty());
+
+        // 2. Signed by peer without a matching inbound key (MissingKey) must be dropped
+        let unknown_raw = build_chat_bundle(
+            "dtn://unknown/chat",
+            "dtn://stata/chat",
+            "missing key",
+            3600,
+        );
+        let unknown_parsed = parse(Bytes::from(unknown_raw.clone())).unwrap();
+        let unknown_key = KeyEntry {
+            id: "u1".into(),
+            direction: Direction::Outbound,
+            pattern: "dtn://stata/*".into(),
+            label: None,
+            secret: b"another_secret_key_32_bytes_long".to_vec(),
+            created_at: "now".into(),
+        };
+        let missing_key_signed =
+            sign_bundle_with_key(&unknown_parsed.bundle, &unknown_raw, &unknown_key, None).unwrap();
+        service
+            .handle_delivered_bundle(Bytes::from(missing_key_signed))
+            .await
+            .unwrap();
+        assert!(storage.list_conversations().unwrap().is_empty());
+
+        // 3. Signed with wrong secret for matching peer (Invalid) must be dropped
+        let parsed = parse(Bytes::from(unsigned.clone())).unwrap();
+        let wrong_key = KeyEntry {
+            id: "bad".into(),
+            direction: Direction::Outbound,
+            pattern: "dtn://stata/*".into(),
+            label: None,
+            secret: b"wrong_secret_key_32_bytes_123456".to_vec(),
+            created_at: "now".into(),
+        };
+        let invalid_signed =
+            sign_bundle_with_key(&parsed.bundle, &unsigned, &wrong_key, None).unwrap();
+        service
+            .handle_delivered_bundle(Bytes::from(invalid_signed))
+            .await
+            .unwrap();
+        assert!(storage.list_conversations().unwrap().is_empty());
+
+        // 4. Valid signature (AuthStatus::Valid) must be accepted
+        let good_key = KeyEntry {
+            id: "good".into(),
+            direction: Direction::Outbound,
+            pattern: "dtn://stata/*".into(),
+            label: None,
+            secret: valid_secret,
+            created_at: "now".into(),
+        };
+        let valid_signed =
+            sign_bundle_with_key(&parsed.bundle, &unsigned, &good_key, None).unwrap();
+        service
+            .handle_delivered_bundle(Bytes::from(valid_signed))
+            .await
+            .unwrap();
+        let convs = storage.list_conversations().unwrap();
+        assert_eq!(convs.len(), 1);
+        assert_eq!(convs[0].total_messages, 1);
+    }
+
+    #[tokio::test]
+    async fn warn_and_ignore_policies_accept_unsigned_bundles() {
+        for policy in [VerifyPolicy::Warn, VerifyPolicy::Ignore] {
+            let keystore = Arc::new(DirectionalKeyStore::empty());
+            keystore.set_policy(policy).unwrap();
+            let (service, storage) = make_chat_service(keystore);
+            let unsigned =
+                build_chat_bundle("dtn://f4jxq/chat", "dtn://stata/chat", "opt-in", 3600);
+            service
+                .handle_delivered_bundle(Bytes::from(unsigned))
+                .await
+                .unwrap();
+            let convs = storage.list_conversations().unwrap();
+            assert_eq!(convs.len(), 1, "policy {policy:?} should accept unsigned");
+        }
+    }
+
+    #[tokio::test]
+    async fn huge_bundle_lifetime_is_clamped_without_overflow() {
+        let keystore = Arc::new(DirectionalKeyStore::empty());
+        keystore.set_policy(VerifyPolicy::Warn).unwrap();
+        let (service, storage) = make_chat_service(keystore);
+        let raw = build_chat_bundle(
+            "dtn://f4jxq/chat",
+            "dtn://stata/chat",
+            "huge lifetime",
+            u64::MAX / 1000,
+        );
+        service
+            .handle_delivered_bundle(Bytes::from(raw))
+            .await
+            .unwrap();
+        let msgs = storage
+            .get_conversation_messages("dtn://f4jxq/chat")
+            .unwrap();
+        assert_eq!(msgs.len(), 1);
+        let delta_ms = msgs[0].expiry_timestamp - msgs[0].timestamp;
+        assert_eq!(delta_ms, 365 * 86_400 * 1000);
     }
 }

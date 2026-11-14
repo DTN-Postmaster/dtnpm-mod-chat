@@ -152,8 +152,8 @@ async fn do_send_chat_message(
         }
     };
 
-    // Chat message lifetime: default to 3600 seconds (1 hour) matching standard bundle lifetime and peer chat messages
-    let lifetime_secs = lifetime_override.unwrap_or(3600);
+    // Chat message lifetime: default to 3600 seconds (1 hour), capped at 1 year (365 days)
+    let lifetime_secs = lifetime_override.unwrap_or(3600).min(365 * 86_400);
     let lifetime = std::time::Duration::from_secs(lifetime_secs);
 
     let (bundle, binbundle) = match Builder::new(sender_eid.clone(), recipient_eid.clone())
@@ -209,8 +209,8 @@ async fn do_send_chat_message(
         .unwrap_or_else(|_| dt.to_string());
 
     let timestamp = (dt.unix_timestamp_nanos() / 1_000_000) as i64;
-    let lifetime_secs = bundle.primary.lifetime.as_secs();
-    let expiry_timestamp = timestamp + (lifetime_secs as i64 * 1000);
+    let lifetime_secs = bundle.primary.lifetime.as_secs().min(365 * 86_400);
+    let expiry_timestamp = timestamp.saturating_add((lifetime_secs as i64).saturating_mul(1000));
 
     let mut message = ChatMessage {
         id: bundle_id.clone(),
