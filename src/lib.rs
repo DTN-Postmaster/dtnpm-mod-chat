@@ -65,11 +65,7 @@ impl WebModule for ChatModule {
             ctx.keystore.clone(),
         ));
         ctx.service_tracker
-            .register_service_with_type(
-                Service::Dtn("chat".into()),
-                chat_service,
-                "Built-in Chat",
-            )
+            .register_service_with_type(Service::Dtn("chat".into()), chat_service, "Built-in Chat")
             .await
             .map_err(|e| anyhow::anyhow!("Failed to register Chat service: {e}"))?;
         Ok(())

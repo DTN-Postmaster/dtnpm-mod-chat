@@ -18,7 +18,10 @@ use hardy_bpa::bpa::BpaRegistration;
 use hardy_bpa::cla::ClaInit;
 
 #[derive(Debug, Parser)]
-#[command(name = "dtnpm-mod-chat", about = "Standalone DTN Chat WebModule daemon")]
+#[command(
+    name = "dtnpm-mod-chat",
+    about = "Standalone DTN Chat WebModule daemon"
+)]
 struct Args {
     /// Hardy BPA gRPC endpoint
     #[arg(long, default_value = "http://127.0.0.1:50051")]
