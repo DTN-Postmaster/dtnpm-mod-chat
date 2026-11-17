@@ -1,45 +1,51 @@
 # Agent Guide — `dtnpm-mod-chat`
 
 ## 🎯 Mission
-Fournir le module applicatif complet (Fullstack WebModule) de messagerie instantanée DTN pour **DTN Postmaster**, comprenant le service BPA (`ChatService`), la persistance locale SQLite des conversations, l'API REST `/api/chat/v1/...` et le composant d'interface Preact sécurisé `<ChatView />`.
+Provide the complete fullstack DTN instant messaging application module (`WebModule`) for **DTN Postmaster**, including the BPA service (`ChatService`), local SQLite persistence for conversations, the `/api/chat/v1/...` REST API, and the secure Preact UI component `<ChatView />`.
 
 ---
 
-## 🛡️ Référentiels et Exigences de Sécurité
+## 📝 Documentation Language
+
+- **English by Default**: English must be used as the language for all documentation, unless the file is suffixed with `.fr.md` or another language is explicitly requested in the prompt.
+
+---
+
+## 🛡️ Security Frameworks and Requirements
 
 ### 1. Cyber Resilience Act (CRA) & BPSec (RFC 9172)
-- **Vérification BPSec Stricte par Défaut** :
-  - En mode `VerifyPolicy::Strict`, tout bundle entrant dont le statut n'est pas strictement `Valid` (c'est-à-dire `Unsigned`, `MissingKey` ou `Invalid`) DOIT être rejeté et abandonné avant stockage ou notification.
-  - Les politiques permissives (`Warn`, `Ignore`) sont des opt-ins explicites configurables pour les environnements de test.
-- **Bornage de la Durée de Vie des Bundles** :
-  - Le calcul des dates d'expiration (`lifetime_secs * 1000`) doit être saturé ou plafonné pour éviter tout débordement arithmétique `u64`.
-- **Supply-Chain & VEX** :
-  - Audit `cargo-audit` et `cargo-deny` vérifié ; VEX `not_affected` pour `RUSTSEC-2026-0459`.
-  - Actions CI épinglées par SHA-1 à 40 caractères.
-- **Politique de sécurité** : Consignée dans [SECURITY.md](SECURITY.md).
+- **Strict BPSec Verification by Default**:
+  - In `VerifyPolicy::Strict` mode, any inbound bundle whose status is not strictly `Valid` (i.e., `Unsigned`, `MissingKey`, or `Invalid`) MUST be rejected and dropped before storage or notification.
+  - Permissive policies (`Warn`, `Ignore`) are explicit configurable opt-ins for test environments.
+- **Bundle Lifetime Clamping**:
+  - Expiration date calculations (`lifetime_secs * 1000`) must be saturated or clamped to prevent any `u64` arithmetic overflow.
+- **Supply-Chain & VEX**:
+  - `cargo-audit` and `cargo-deny` audits verified; `not_affected` VEX for `RUSTSEC-2026-0459`.
+  - CI actions pinned by full 40-character SHA-1.
+- **Security Policy**: Documented in [SECURITY.md](SECURITY.md).
 
-### 2. OWASP & Sécurité Frontend
-- **Protection XSS sur le Rendu Markdown** :
-  - Le parseur Markdown utilise des nonces cryptographiques aléatoires (`crypto.getRandomValues`) pour l'échappement des balises et autolinks, prévenant toute collision ou injection malveillante.
-  - Les images distantes sont désactivées par défaut (`allowExternalImages: false`) pour interdire toute fuite de métadonnées ou de géolocalisation IP.
-  - Aucune expression régulière linéaire vulnérable au ReDoS n'est tolérée dans le parseur.
-- **Robustesse de l'Interface (`ChatView.tsx`)** :
-  - Normalisation rigoureuse des EID (`normalizeChatTarget`) lors du filtrage des conversations actives.
-  - Gestion silencieuse des erreurs d'acquittement de lecture (`.catch(() => {})`).
-
----
-
-## 🦀 Standards d'Ingénierie Rust
-
-1. **Règle Zéro Panic / Zéro Unwrap** :
-   - Tout le code sous `src/` doit être 100% exempt de `.unwrap()`, `.expect()` et de macro `panic!`.
-   - Linter strict : `-D warnings -D clippy::unwrap_used -D clippy::panic`.
-2. **ADRs Obligatoires** :
-   - Toute décision architecturale Chat/BPSec doit être consignée sous `adr/` et indexée dans [adr/README.md](adr/README.md).
+### 2. OWASP & Frontend Security
+- **XSS Protection on Markdown Rendering**:
+  - The Markdown parser uses random cryptographic nonces (`crypto.getRandomValues`) for escaping tags and autolinks, preventing any collision or malicious injection.
+  - Remote images are disabled by default (`allowExternalImages: false`) to prevent any metadata leakage or IP geolocation.
+  - No linear regular expressions vulnerable to ReDoS are tolerated in the parser.
+- **UI Robustness (`ChatView.tsx`)**:
+  - Strict EID normalization (`normalizeChatTarget`) when filtering active conversations.
+  - Silent handling of read-receipt acknowledgement errors (`.catch(() => {})`).
 
 ---
 
-## ⚡ Commandes Critiques de Vérification
+## 🦀 Rust Engineering Standards
+
+1. **Zero Panic / Zero Unwrap Rule**:
+   - All code under `src/` must be 100% free of `.unwrap()`, `.expect()`, and the `panic!` macro.
+   - Strict linter: `-D warnings -D clippy::unwrap_used -D clippy::panic`.
+2. **Mandatory ADRs**:
+   - Any Chat/BPSec architectural decision must be recorded under `adr/` and indexed in [adr/README.md](adr/README.md).
+
+---
+
+## ⚡ Critical Verification Commands
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --offline --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::panic`

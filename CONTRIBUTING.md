@@ -1,21 +1,21 @@
-# Guide de Contribution — `dtnpm-mod-chat`
+# Contributing Guide — `dtnpm-mod-chat`
 
-Ce guide présente les règles de développement et les exigences de sécurité pour le module Chat de `dtnpm-mod-chat`.
-
----
-
-## 1. Principes Fondamentaux
-
-- **Zéro Panic / Zéro Unwrap** : Aucun appel `.unwrap()` ou `.expect()` en code de production.
-- **Sécurité BPSec & XSS** :
-  - Tout bundle entrant sous politique stricte doit être authentifié avec succès pour être délivré.
-  - Le rendu Markdown côté UI doit impérativement utiliser les nonces cryptographiques et bloquer les images distantes par défaut.
-- **Traçabilité Architecturale (ADR)** :
-  - Tout changement de schéma de base de données, d'API ou de protocole doit faire l'objet d'un fichier ADR sous `adr/` et être indexé dans `adr/README.md`.
+This guide outlines the development rules and security requirements for the `dtnpm-mod-chat` Chat module.
 
 ---
 
-## 2. Vérification Locale
+## 1. Core Principles
+
+- **Zero Panic / Zero Unwrap**: No `.unwrap()` or `.expect()` calls in production code.
+- **BPSec & XSS Security**:
+  - Any inbound bundle under strict policy must be successfully authenticated before delivery.
+  - UI-side Markdown rendering must strictly use cryptographic nonces and block remote images by default.
+- **Architectural Traceability (ADR)**:
+  - Any change to the database schema, API, or protocol must be documented in an ADR file under `adr/` and indexed in `adr/README.md`.
+
+---
+
+## 2. Local Verification
 
 ```bash
 cargo fmt --all -- --check
