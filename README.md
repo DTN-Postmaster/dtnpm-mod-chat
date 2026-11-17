@@ -2,6 +2,10 @@
 
 Fullstack **DTN Chat** plugin for **DTN Postmaster** (`dtnpm`), implementing `dtnpm_web_core::WebModule`.
 
+## Screenshot
+
+![DTN Chat UI](docs/screenshots/chat.png)
+
 ## Features
 
 - **BPA Service (`ChatService`)**: Registers `dtn://<node>/chat`, receives inbound chat bundles, verifies directional BPsec signatures, and notifies WebUI clients via SSE.
