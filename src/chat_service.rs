@@ -15,6 +15,7 @@ use tokio::sync::OnceCell;
 use tracing::{debug, info, warn};
 
 use crate::chat_manager::{ChatManager, ChatMessage, normalize_chat_target};
+use dtnpm_core::internal_storage::status_notify_to_parts;
 use dtnpm_core::security::{AuthStatus, DirectionalKeyStore, VerifyPolicy, verify_parsed_bundle};
 use dtnpm_core::service_tracker::ServiceTracker;
 
@@ -150,33 +151,25 @@ impl Service for ChatService {
         reason: ReasonCode,
         timestamp: Option<OffsetDateTime>,
     ) {
-        let status_str = match kind {
-            StatusNotify::Received => "received",
-            StatusNotify::Forwarded => "forwarded",
-            StatusNotify::Delivered => "delivered",
-            StatusNotify::Deleted => "deleted",
-        };
-        let reason_u64 = u64::from(reason);
-        let ts_ms = i64::try_from(
-            timestamp
-                .unwrap_or_else(OffsetDateTime::now_utc)
-                .unix_timestamp_nanos()
-                / 1_000_000,
-        )
-        .unwrap_or(0);
+        let (status_str, reason_u64, ts_ms) = status_notify_to_parts(kind, reason, timestamp);
         let key = bundle_id.to_key();
 
         match self
             .chat_manager
             .update_chat_delivery_status(&key, status_str, reason_u64, ts_ms)
         {
-            Ok(true) => debug!(
-                bundle_id = %key,
-                from = %from,
-                delivery_status = status_str,
-                reason = reason_u64,
-                "Updated chat bundle delivery receipt"
-            ),
+            Ok(true) => {
+                debug!(
+                    bundle_id = %key,
+                    from = %from,
+                    delivery_status = status_str,
+                    reason = reason_u64,
+                    "Updated chat bundle delivery receipt"
+                );
+                if let Ok(Some(updated)) = self.chat_manager.get_chat_message(&key) {
+                    self.service_tracker.broadcast_chat_message(updated);
+                }
+            }
             Ok(false) => debug!(
                 bundle_id = %key,
                 delivery_status = status_str,
@@ -394,6 +387,7 @@ mod tests {
         };
         storage.insert_message(&outbound).unwrap();
 
+        let mut rx = service.service_tracker.subscribe();
         let report_from: Eid = "dtn://statb/".parse().unwrap();
         let ts = OffsetDateTime::from_unix_timestamp(1_700_000_500).unwrap();
         service
@@ -415,5 +409,14 @@ mod tests {
         assert_eq!(msgs[0].delivery_status.as_deref(), Some("delivered"));
         assert_eq!(msgs[0].delivery_reason, Some(0));
         assert_eq!(msgs[0].delivery_updated_at, Some(1_700_000_500_000));
+
+        let ev = rx.try_recv().expect("expected SSE ChatMessage event");
+        match ev {
+            dtnpm_core::service_tracker::ServiceEvent::ChatMessage { message } => {
+                assert_eq!(message["id"], bundle_key);
+                assert_eq!(message["delivery_status"], "delivered");
+            }
+            other => panic!("unexpected service event: {other:?}"),
+        }
     }
 }
