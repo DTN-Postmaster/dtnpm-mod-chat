@@ -112,6 +112,9 @@ impl ChatService {
             expiry_timestamp,
             created_at,
             auth_status: auth_status.as_str().to_string(),
+            delivery_status: None,
+            delivery_reason: None,
+            delivery_updated_at: None,
         };
 
         if let Err(e) = self.chat_manager.insert_message(&msg) {
@@ -141,13 +144,50 @@ impl Service for ChatService {
 
     async fn on_status_notify(
         &self,
-        _bundle_id: &Id,
-        _from: &Eid,
-        _kind: StatusNotify,
-        _reason: ReasonCode,
-        _timestamp: Option<OffsetDateTime>,
+        bundle_id: &Id,
+        from: &Eid,
+        kind: StatusNotify,
+        reason: ReasonCode,
+        timestamp: Option<OffsetDateTime>,
     ) {
-        // Chat service does not inspect raw status reports
+        let status_str = match kind {
+            StatusNotify::Received => "received",
+            StatusNotify::Forwarded => "forwarded",
+            StatusNotify::Delivered => "delivered",
+            StatusNotify::Deleted => "deleted",
+        };
+        let reason_u64 = u64::from(reason);
+        let ts_ms = i64::try_from(
+            timestamp
+                .unwrap_or_else(OffsetDateTime::now_utc)
+                .unix_timestamp_nanos()
+                / 1_000_000,
+        )
+        .unwrap_or(0);
+        let key = bundle_id.to_key();
+
+        match self
+            .chat_manager
+            .update_chat_delivery_status(&key, status_str, reason_u64, ts_ms)
+        {
+            Ok(true) => debug!(
+                bundle_id = %key,
+                from = %from,
+                delivery_status = status_str,
+                reason = reason_u64,
+                "Updated chat bundle delivery receipt"
+            ),
+            Ok(false) => debug!(
+                bundle_id = %key,
+                delivery_status = status_str,
+                "Ignored chat status notification (unknown bundle or non-progressive status)"
+            ),
+            Err(err) => warn!(
+                bundle_id = %key,
+                delivery_status = status_str,
+                "Failed to persist chat delivery receipt: {err}"
+            ),
+        }
     }
 
     async fn on_deliver(
@@ -318,5 +358,62 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         let delta_ms = msgs[0].expiry_timestamp - msgs[0].timestamp;
         assert_eq!(delta_ms, 365 * 86_400 * 1000);
+    }
+
+    #[tokio::test]
+    async fn status_notify_persists_delivery_receipt_without_breaking_status_check() {
+        let keystore = Arc::new(DirectionalKeyStore::empty());
+        let (service, storage) = make_chat_service(keystore);
+
+        let src: Eid = "dtn://stata/chat".parse().unwrap();
+        let dst: Eid = "dtn://statb/chat".parse().unwrap();
+        let (bundle, _) = Builder::new(src, dst)
+            .with_lifetime(Duration::from_secs(3600))
+            .with_payload(b"outbound receipt test".to_vec().into())
+            .build(CreationTimestamp::now())
+            .unwrap();
+        let bundle_key = bundle.primary.id.to_key();
+
+        let outbound = ChatMessage {
+            id: bundle_key.clone(),
+            conversation_peer: "dtn://statb/chat".to_string(),
+            sender_eid: "dtn://stata/chat".to_string(),
+            recipient_eid: "dtn://statb/chat".to_string(),
+            content: "outbound receipt test".to_string(),
+            direction: "outbound".to_string(),
+            status: "sent".to_string(),
+            is_read: true,
+            is_sticky: false,
+            timestamp: 1_700_000_000_000,
+            expiry_timestamp: 1_700_003_600_000,
+            created_at: "2026-11-22T12:00:00Z".to_string(),
+            auth_status: "valid".to_string(),
+            delivery_status: None,
+            delivery_reason: None,
+            delivery_updated_at: None,
+        };
+        storage.insert_message(&outbound).unwrap();
+
+        let report_from: Eid = "dtn://statb/".parse().unwrap();
+        let ts = OffsetDateTime::from_unix_timestamp(1_700_000_500).unwrap();
+        service
+            .on_status_notify(
+                &bundle.primary.id,
+                &report_from,
+                StatusNotify::Delivered,
+                ReasonCode::NoAdditionalInformation,
+                Some(ts),
+            )
+            .await;
+
+        let msgs = storage
+            .get_conversation_messages("dtn://statb/chat")
+            .unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].id, bundle_key);
+        assert_eq!(msgs[0].status, "sent");
+        assert_eq!(msgs[0].delivery_status.as_deref(), Some("delivered"));
+        assert_eq!(msgs[0].delivery_reason, Some(0));
+        assert_eq!(msgs[0].delivery_updated_at, Some(1_700_000_500_000));
     }
 }

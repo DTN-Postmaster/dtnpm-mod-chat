@@ -51,6 +51,9 @@ mod tests {
             expiry_timestamp: 86401000,
             created_at: "2026-11-04T12:00:00Z".to_string(),
             auth_status: "unsigned".to_string(),
+            delivery_status: None,
+            delivery_reason: None,
+            delivery_updated_at: None,
         };
 
         manager.insert_message(&msg).unwrap();

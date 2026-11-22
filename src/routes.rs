@@ -226,6 +226,9 @@ async fn do_send_chat_message(
         expiry_timestamp,
         created_at,
         auth_status,
+        delivery_status: None,
+        delivery_reason: None,
+        delivery_updated_at: None,
     };
 
     info!(
